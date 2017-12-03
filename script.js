@@ -22,7 +22,6 @@ const app = (function(){
             setAll(x,y,s) { pos.x=x; pos.y=y; scale=s },
             clientToWorld(cX,cY){
                 return [
-                    // functions can be reduced! left this way for clarity (for now)
                     pos.x - (context.canvas.width/scale/2) + (cX/scale),
                     pos.y + (context.canvas.height/scale/2) - (cY/scale)
                 ]
@@ -30,17 +29,98 @@ const app = (function(){
         }
     })()
 
+    const Spatial = (function(){
+        const EDGE = 20
+        const hash = n => Math.floor(n/EDGE)
+        const test = (iA,iB) => {
+            let eA = Entities[iA]
+            let eB = Entities[iB]
+            let rA = eA.r || 1
+            let rB = eB.r || 1
+            let dx = eA.x - eB.x
+            let dy = eA.y - eB.y
+            return Math.sqrt(dx*dx+dy*dy) - rA - rB <= 0
+        }
+        var bin = {}
+        return {
+            add(x,y,entityIndex){
+                x = hash(x)
+                y = hash(y)
+                if (bin[x]) {
+                    if (bin[x][y]) bin[x][y].push(entityIndex)
+                    else bin[x][y] = [entityIndex]
+                }
+                else {
+                    bin[x] = {}
+                    bin[x][y] = [entityIndex]
+                }
+            },
+            runHitTest(){
+                var couplets = {}
+                var neighborsIndex
+                for (var x in bin) for (var y in bin[x]) {
+                    neighborsIndex = []
+                    for (var xAdd=-1; xAdd<2; xAdd+=1) {
+                        var _addX = parseInt(x) + xAdd
+                        if (bin[_addX]) for (var yAdd=-1; yAdd<2; yAdd+=1) {
+                            var _addY = parseInt(y) + yAdd
+                            if (bin[_addX][_addY]) bin[_addX][_addY].forEach( nI => neighborsIndex.push(nI) )
+                        }
+                    }
+                    bin[x][y].forEach( index => {
+                        neighborsIndex.forEach( nI => {
+                            if (nI !== index) {
+                                var lowIndex = Math.min(nI,index)
+                                var highIndex = Math.max(nI,index)
+                                if (couplets[lowIndex]) {
+                                    if (couplets[lowIndex][highIndex] === undefined) couplets[lowIndex][highIndex] = test(lowIndex,highIndex)
+                                }
+                                else {
+                                    couplets[lowIndex] = {}
+                                    couplets[lowIndex][highIndex] = test(lowIndex,highIndex)
+                                }
+                            }
+                        })
+                    })
+                }
+                // reset for next use
+                bin = {}
+                // return result
+                return couplets
+            }
+        }
+    })()
+
     const gameplayLoop = function() {
+
         // get time step
         var tNow = new Date().getTime()
         var dt = tNow - Env.tPrevious
-        if (dt > 50) throw new Error(dt + "ms elapsed between frames!")
+        if (dt > 40) throw new Error(dt + "ms elapsed between frames!")
         Env.tPrevious = tNow
+
         // step world actions
-        Entities.forEach( entity => entity.step(dt) )
+        var dtGame = dt/16
+        Entities.forEach( (entity,index) => {
+            entity.step(dtGame)
+            Spatial.add(entity.x,entity.y,index)
+        })
+        var couplets = Spatial.runHitTest()
+        if (Object.keys(couplets).length) {
+            for (var aI in couplets) for (var bI in couplets[aI]) if (couplets[aI][bI]) {
+                console.log(aI,bI)
+                var A = Entities[aI]
+                var B = Entities[bI]
+                if (A.injure && B.damage) A.injure(B.damage())
+                if (B.injure && A.damage) B.injure(A.damage())
+            }
+        }
+        for (var _ei = Entities.length; _ei--;) if (Entities[_ei].DEAD) Entities.splice(_ei,1)
+        // collision test and handle actions
         // clear canvas
         context.setTransform(1,0,0,1,0,0)
         context.clearRect(0,0,context.canvas.width,context.canvas.height)
+
         // set transform and draw
         context.setTransform(
             1*Viewport.scale(),
@@ -50,11 +130,23 @@ const app = (function(){
             context.canvas.height/2 + Viewport.y()*Viewport.scale()
         )
         Entities.forEach( entity => entity.draw() )
-        //debug
+
+        //debug :: draw center point
         context.fillStyle="#FF00FF"
         context.fillRect(-2,-2,4,4)
+
+        // handle user input
         inputHandler()
+
+        // handle world randomization and progress
+        if (Math.random() > 0.99) Dungeon.spawn("massDriver",{})
+
+        //debug :: time frame
+        //if(Math.random() > 0.95) console.log(new Date().getTime() - tNow)
+
+        // loop
         if (Env.state === "gameplay") window.requestAnimationFrame(gameplayLoop)
+
     }
 
     const Dungeon = (function(){
@@ -62,32 +154,61 @@ const app = (function(){
         var T = {}
 
         T.plasma = function(props) {
-            if (!props.vector) throw new Error("must supply `vector` in constructor params")
-            let speed = 2
+            this.speed = 2
             let _vx = props.vector[0]
             let _vy = props.vector[1]
             let _vs = Math.sqrt( _vx*_vx + _vy*_vy )
-            this.dx = _vx / _vs * speed
-            this.dy = _vy / _vs * speed
+            this.dx = _vx / _vs * this.speed
+            this.dy = _vy / _vs * this.speed
             this.Ti = props.Ti || new Date().getTime()
             this.x = props.Xi || 0
             this.y = props.Yi || 0
             this.color = props.color || [200,0,0]
-            this.width = props.width || 1
-            this.xLengthAdd = _vx / _vs * (props.boltLength || 7)
-            this.yLengthAdd = _vy / _vs * (props.boltLength || 7)
+            this.boltWidth = props.boltWidth || 2
+            this.boltLength = props.boltLength || 7
+            this.xLengthAdd = _vx / _vs * this.boltLength
+            this.yLengthAdd = _vy / _vs * this.boltLength
+            this.level = props.level || 1
         }
         T.plasma.prototype.draw = function() {
             context.strokeStyle = "rgb("+this.color.join(",")+")"
-            context.lineWidth = this.width
+            context.lineWidth = this.boltWidth
             context.beginPath()
             context.moveTo(this.x,this.y)
             context.lineTo(this.x-this.xLengthAdd,this.y-this.yLengthAdd)
             context.stroke()
         }
         T.plasma.prototype.step = function(dt) {
-            this.x += this.dx * dt/16
-            this.y += this.dy * dt/16
+            if (Env.tPrevious - this.Ti > 5000) this.DEAD = true
+            this.x += this.dx
+            this.y += this.dy
+        }
+        T.plasma.prototype.damage = function() {
+            return this.boltWidth * this.boltLength / this.speed * this.level
+        }
+
+        T.massDriver = function(props) {
+            this.r = props.r || 6
+            this.dx = (Math.random() > 0.5 ? -1 : 1) * Math.random()
+            this.dy = -0.8
+            this.x = (Math.random() > 0.5 ? -1 : 1) * Math.random() * 500
+            this.y = 800
+        }
+        T.massDriver.prototype.draw = function() {
+            context.beginPath()
+            context.arc(this.x, this.y, this.r, 0, 2*Math.PI, false)
+            context.fill()
+        }
+        T.massDriver.prototype.step = function(dt) {
+            this.x += this.dx * dt
+            this.y += this.dy * dt
+            if (this.y < 50) this.DEAD = true
+        }
+        T.massDriver.prototype.injure = function(damage) {
+            let area = this.r*this.r*Math.PI - damage
+            if (area <= 0) this.DEAD = true
+            else this.r = Math.sqrt(area/Math.PI)
+            console.log(area,damage,this.r)
         }
 
         return {
@@ -100,10 +221,8 @@ const app = (function(){
     })()
 
     const canvasClick = function(event) {
-        console.log(Viewport.clientToWorld(event.clientX,event.clientY))
         Dungeon.spawn("plasma",{
             vector: Viewport.clientToWorld(event.clientX,event.clientY)
-            // vector: [ event.clientX - context.canvas.width/2 , context.canvas.height - event.clientY ]
         })
     }
 
