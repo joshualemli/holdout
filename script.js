@@ -8,6 +8,10 @@ const app = (function(){
     var Env = {}
 
     var Entities = []
+    var EntityGroups
+    const resetEntityGroups = () => EntityGroups = {
+        playerWeapons: []
+    }
 
     const Viewport = (function(){
         var scale = 1 // scale FACTOR e.g. `size_on_screen = size*scale`
@@ -96,19 +100,19 @@ const app = (function(){
         // get time step
         var tNow = new Date().getTime()
         var dt = tNow - Env.tPrevious
-        if (dt > 40) throw new Error(dt + "ms elapsed between frames!")
+        if (dt > 40) console.log(dt + "ms elapsed between frames!")
         Env.tPrevious = tNow
 
         // step world actions
+        resetEntityGroups()
         var dtGame = dt/16
         Entities.forEach( (entity,index) => {
-            entity.step(dtGame)
+            entity.step(dtGame,index)
             Spatial.add(entity.x,entity.y,index)
         })
         var couplets = Spatial.runHitTest()
         if (Object.keys(couplets).length) {
             for (var aI in couplets) for (var bI in couplets[aI]) if (couplets[aI][bI]) {
-                console.log(aI,bI)
                 var A = Entities[aI]
                 var B = Entities[bI]
                 if (A.injure && B.damage) A.injure(B.damage())
@@ -131,12 +135,8 @@ const app = (function(){
         )
         Entities.forEach( entity => entity.draw() )
 
-        //debug :: draw center point
-        context.fillStyle="#FF00FF"
-        context.fillRect(-2,-2,4,4)
-
         // handle user input
-        inputHandler()
+        UserInput.handle()
 
         // handle world randomization and progress
         if (Math.random() > 0.99) Dungeon.spawn("massDriver",{})
@@ -153,16 +153,41 @@ const app = (function(){
 
         var T = {}
 
+        T.plasmaGun = function(props) {
+            this.cooldown = props.cooldown || 300
+            this.lastFired = 0
+            this.x = props.x
+            this.y = props.y
+            this.r = 3
+        }
+        T.plasmaGun.prototype.step = function(dt,index) {
+            EntityGroups.playerWeapons.push(index)
+        }
+        T.plasmaGun.prototype.draw = function(){
+            context.fillStyle = "#FF00FF"
+            context.fillRect(this.x-this.r, this.y-this.r, this.r*2, this.r*2)
+        }
+        T.plasmaGun.prototype.fire = function(t,worldPosArr) {
+            if (t - this.lastFired >= this.cooldown) {
+                Dungeon.spawn("plasma",{
+                    vector: worldPosArr,
+                    x:this.x,
+                    y:this.y + this.r + 1
+                })
+                this.lastFired = t
+            }
+        }
+
         T.plasma = function(props) {
+            this.x = props.x || 0
+            this.y = props.y || 0
             this.speed = 2
-            let _vx = props.vector[0]
-            let _vy = props.vector[1]
+            let _vx = props.vector[0] - this.x
+            let _vy = props.vector[1] - this.y
             let _vs = Math.sqrt( _vx*_vx + _vy*_vy )
             this.dx = _vx / _vs * this.speed
             this.dy = _vy / _vs * this.speed
             this.Ti = props.Ti || new Date().getTime()
-            this.x = props.Xi || 0
-            this.y = props.Yi || 0
             this.color = props.color || [200,0,0]
             this.boltWidth = props.boltWidth || 2
             this.boltLength = props.boltLength || 7
@@ -178,7 +203,7 @@ const app = (function(){
             context.lineTo(this.x-this.xLengthAdd,this.y-this.yLengthAdd)
             context.stroke()
         }
-        T.plasma.prototype.step = function(dt) {
+        T.plasma.prototype.step = function(dt,index) {
             if (Env.tPrevious - this.Ti > 5000) this.DEAD = true
             this.x += this.dx
             this.y += this.dy
@@ -199,7 +224,7 @@ const app = (function(){
             context.arc(this.x, this.y, this.r, 0, 2*Math.PI, false)
             context.fill()
         }
-        T.massDriver.prototype.step = function(dt) {
+        T.massDriver.prototype.step = function(dt,index) {
             this.x += this.dx * dt
             this.y += this.dy * dt
             if (this.y < 50) this.DEAD = true
@@ -208,7 +233,6 @@ const app = (function(){
             let area = this.r*this.r*Math.PI - damage
             if (area <= 0) this.DEAD = true
             else this.r = Math.sqrt(area/Math.PI)
-            console.log(area,damage,this.r)
         }
 
         return {
@@ -220,18 +244,19 @@ const app = (function(){
         }
     })()
 
-    const canvasClick = function(event) {
-        Dungeon.spawn("plasma",{
-            vector: Viewport.clientToWorld(event.clientX,event.clientY)
-        })
-    }
+    // const canvasClick = function(event) {
+    //     Dungeon.spawn("plasma",{
+    //         vector: Viewport.clientToWorld(event.clientX,event.clientY)
+    //     })
+    // }
 
     const resizeContext = function() {
         context.canvas.width = canvas.offsetWidth
         context.canvas.height = canvas.offsetHeight
     }
 
-    const inputHandler = (function(){
+    const UserInput = (function(){
+        var worldClickPos
         const inputAction = {
             gameplay: {
                 "="(){Viewport.zoom(1.01)},
@@ -240,15 +265,29 @@ const app = (function(){
                 "ArrowDown"(){Viewport.move("y",-1)},
                 "ArrowLeft"(){Viewport.move("x",-1)},
                 "ArrowRight"(){Viewport.move("x",1)},
-                "0"(){Viewport.setAll(0,0,1)}
-                //"0":Viewport.init
+                "0"(){Viewport.setAll(0,0,1)},
+                "mouse"(){
+                    switch(Env.mouseAction) {
+                        case "fire":
+                            EntityGroups.playerWeapons.forEach( wIndex => Entities[wIndex].fire(Env.tPrevious,worldClickPos) )
+                            break
+                        default: throw new Error("no mouse action set")
+                    }
+                }
             }
         }
         var KeyMap = {}
-        window.addEventListener("keydown", event => KeyMap[event.key] = true )
-        window.addEventListener("keyup", event => KeyMap[event.key] = false )
-        return function() {
-            for (var key in KeyMap) if (KeyMap[key] && inputAction[Env.state][key]) inputAction[Env.state][key]()
+        return {
+            init() {
+                window.addEventListener("keydown", event => KeyMap[event.key] = true )
+                window.addEventListener("keyup", event => KeyMap[event.key] = false )
+                canvas.addEventListener("mousemove", event => worldClickPos = Viewport.clientToWorld(event.clientX,event.clientY) )
+                canvas.addEventListener("mousedown", event => KeyMap.mouse = true )
+                canvas.addEventListener("mouseup", event => KeyMap.mouse = false )
+            },
+            handle() {
+                for (var key in KeyMap) if (KeyMap[key] && inputAction[Env.state][key]) inputAction[Env.state][key]()
+            }
         }
     })()
 
@@ -258,14 +297,19 @@ const app = (function(){
             context = canvas.getContext("2d")
             resizeContext()
             window.addEventListener("resize",resizeContext)
-            canvas.addEventListener("click",canvasClick)
-            inputHandler()
+            // canvas.addEventListener("click",canvasClick)
+            UserInput.init()
             Viewport.init()
             Env._READY = true
         }
         if (Env.state) console.log("Env.state!",Env.state)
+        Env.mouseAction = "fire"
         Env.state = "gameplay"
         Env.tPrevious = new Date().getTime()
+
+        // debug :: create a weapon?
+        Dungeon.spawn("plasmaGun",{x:0,y:0})
+
         window.requestAnimationFrame(gameplayLoop)
     }
 
