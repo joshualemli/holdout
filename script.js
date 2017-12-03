@@ -139,7 +139,7 @@ const app = (function(){
         UserInput.handle()
 
         // handle world randomization and progress
-        if (Math.random() > 0.99) Dungeon.spawn("massDriver",{})
+        if (Math.random() > 0.96) Dungeon.spawn("massDriver",{})
 
         //debug :: time frame
         //if(Math.random() > 0.95) console.log(new Date().getTime() - tNow)
@@ -154,11 +154,30 @@ const app = (function(){
         var T = {}
 
         T.plasmaGun = function(props) {
-            this.cooldown = props.cooldown || 300
+            this.level = 1
+            this.cooldown = 225
             this.lastFired = 0
             this.x = props.x
             this.y = props.y
-            this.r = 3
+            this.r = 10
+            this.bolt = {
+                speed: 2,
+                width: 2,
+                trail: 7,
+                lifespan: 3100
+            }
+            if (props.level) this.setLevel(props.level)
+        }
+        T.plasmaGun.prototype.setLevel = function(level) {
+            var dir = level - this.level > 0 ? 1 : -1
+            while (this.level !== level) {
+                this.level += dir
+                this.cooldown += dir * -0.1 * this.cooldown
+                this.bolt.speed += dir * 0.05 * this.bolt.speed
+                this.bolt.width += dir * 0.02 * this.bolt.width
+                this.bolt.trail += dir * 0.03 * this.bolt.trail
+                this.bolt.lifespan += dir * 100
+            }
         }
         T.plasmaGun.prototype.step = function(dt,index) {
             EntityGroups.playerWeapons.push(index)
@@ -167,59 +186,68 @@ const app = (function(){
             context.fillStyle = "#FF00FF"
             context.fillRect(this.x-this.r, this.y-this.r, this.r*2, this.r*2)
         }
+        T.plasmaGun.prototype.injure = function(damage) {
+            let area = this.r*this.r*Math.PI - damage
+            if (area <= 25) this.DEAD = true
+            else this.r = Math.sqrt(area/Math.PI)
+        }
         T.plasmaGun.prototype.fire = function(t,worldPosArr) {
             if (t - this.lastFired >= this.cooldown) {
                 Dungeon.spawn("plasma",{
                     vector: worldPosArr,
                     x:this.x,
-                    y:this.y + this.r + 1
+                    y:this.y + this.r + 1,
+                    bolt: this.bolt
                 })
                 this.lastFired = t
             }
         }
 
         T.plasma = function(props) {
+            if (!props.vector) console.log(props)
             this.x = props.x || 0
             this.y = props.y || 0
-            this.speed = 2
+            this.color = props.bolt.color || [200,0,0]
+            this.r = props.bolt.width || 2
+            this.boltLength = props.bolt.trail || 7
+            this.speed = props.bolt.speed || 2
             let _vx = props.vector[0] - this.x
             let _vy = props.vector[1] - this.y
             let _vs = Math.sqrt( _vx*_vx + _vy*_vy )
             this.dx = _vx / _vs * this.speed
             this.dy = _vy / _vs * this.speed
-            this.Ti = props.Ti || new Date().getTime()
-            this.color = props.color || [200,0,0]
-            this.boltWidth = props.boltWidth || 2
-            this.boltLength = props.boltLength || 7
+            this.Ti = new Date().getTime()
             this.xLengthAdd = _vx / _vs * this.boltLength
             this.yLengthAdd = _vy / _vs * this.boltLength
-            this.level = props.level || 1
+            this.lifespan = 3100
+            this.level = 1
         }
         T.plasma.prototype.draw = function() {
             context.strokeStyle = "rgb("+this.color.join(",")+")"
-            context.lineWidth = this.boltWidth
+            context.lineWidth = this.r
             context.beginPath()
             context.moveTo(this.x,this.y)
             context.lineTo(this.x-this.xLengthAdd,this.y-this.yLengthAdd)
             context.stroke()
         }
         T.plasma.prototype.step = function(dt,index) {
-            if (Env.tPrevious - this.Ti > 5000) this.DEAD = true
+            if (Env.tPrevious - this.Ti > this.lifespan) this.DEAD = true
             this.x += this.dx
             this.y += this.dy
         }
         T.plasma.prototype.damage = function() {
-            return this.boltWidth * this.boltLength / this.speed * this.level
+            return this.r * this.boltLength * this.level / this.speed
         }
 
         T.massDriver = function(props) {
             this.r = props.r || 6
-            this.dx = (Math.random() > 0.5 ? -1 : 1) * Math.random()
+            this.dx = (Math.random() > 0.5 ? -1 : 1) * Math.random() * 0.1
             this.dy = -0.8
-            this.x = (Math.random() > 0.5 ? -1 : 1) * Math.random() * 500
+            this.x = (Math.random() > 0.5 ? -1 : 1) * Math.random() * 100
             this.y = 800
         }
         T.massDriver.prototype.draw = function() {
+            context.fillStyle = "#AA7777"
             context.beginPath()
             context.arc(this.x, this.y, this.r, 0, 2*Math.PI, false)
             context.fill()
@@ -227,12 +255,16 @@ const app = (function(){
         T.massDriver.prototype.step = function(dt,index) {
             this.x += this.dx * dt
             this.y += this.dy * dt
-            if (this.y < 50) this.DEAD = true
+            if (this.y < 0) this.DEAD = true
         }
         T.massDriver.prototype.injure = function(damage) {
             let area = this.r*this.r*Math.PI - damage
-            if (area <= 0) this.DEAD = true
+            if (area < 2) this.DEAD = true
             else this.r = Math.sqrt(area/Math.PI)
+        }
+        T.massDriver.prototype.damage = function() {
+            this.DEAD = true
+            return this.r * this.r * 2.5
         }
 
         return {
@@ -240,6 +272,7 @@ const app = (function(){
                 if (!T[type]) throw new Error("invalid type")
                 var e = new T[type](props)
                 Entities.push(e)
+                return e
             }
         }
     })()
@@ -308,7 +341,9 @@ const app = (function(){
         Env.tPrevious = new Date().getTime()
 
         // debug :: create a weapon?
-        Dungeon.spawn("plasmaGun",{x:0,y:0})
+        Dungeon.spawn("plasmaGun",{x:-250,y:0}).setLevel(2)
+        Dungeon.spawn("plasmaGun",{x:0,y:0}).setLevel(5)
+        Dungeon.spawn("plasmaGun",{x:250,y:0}).setLevel(10)
 
         window.requestAnimationFrame(gameplayLoop)
     }
