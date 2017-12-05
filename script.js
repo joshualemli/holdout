@@ -241,16 +241,18 @@ window.pk = Player
             BaseEntity.call(this,props)
             this.cooldown = 225
             this.lastFired = 0
+            // this.color = [63,255,0]
             this.colorCycleIndex = 0
             this.colorCycleWheel = [
-                [255,0,0],
-                [255,128,0],
-                [255,255,0],
-                [128,255,0],
-                [0,255,128],
-                [0,255,255],
-                [0,128,255],
-                [0,0,255]
+                [63,255,0]
+                // [255,0,0],
+                // [255,128,0],
+                // [255,255,0],
+                // [128,255,0],
+                // [0,255,128],
+                // [0,255,255],
+                // [0,128,255],
+                // [0,0,255]
             ]
         }
         T.plasmaGun.prototype.type = "Plasma Gun"
