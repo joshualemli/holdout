@@ -5,13 +5,64 @@ const app = (function(){
 
     var canvas, context
 
+    const safeChars = str => str.replace(/[^a-zA-Z0-9]/g,"")
+
+    const normalizeVector = (v,l) => { // v = original vector, l = normalized length
+        let dX = v[0], dY = v[1]
+        let dD = Math.sqrt( dX*dX + dY*dY )
+        return [dX/dD * l, dY/dD * l]
+    }
+
     var Env = {}
 
+    var Player = {
+        resources: {
+            unrefinedOre: 0,
+            processedOre: 0,
+            preciousMinerals: 0
+        },
+        kills: {},
+        updateKills: type => {
+            var safeCharsType = safeChars(type)
+            Player.kills[safeCharsType] += 1
+            var e = document.getElementById("kills-item-"+safeCharsType)
+            if (!e) {
+                e = document.createElement("div")
+                e.innerHTML = `<span style="width:20em">${type}</span> ... <span id="kills-item-${safeCharsType}">1</span>`
+                document.getElementById("kills").appendChild(e)
+            }
+            else e.innerHTML = Player.kills[safeCharsType]
+        }
+    }
+window.pk = Player
     var Entities = []
     var EntityGroups
     const resetEntityGroups = () => EntityGroups = {
         playerWeapons: []
     }
+
+    var Effects = []
+    var EffectBook = {}
+    EffectBook.impact = function(props) {
+        this.x = props.x;
+        this.y = props.y;
+        this.rMax = props.r
+        this.r = props.r * 0.05
+        this.lifespan = props.lifespan || 1000
+        this.tCreated = new Date().getTime()
+    }
+    EffectBook.impact.prototype.stepAndDraw = function(dt,index) {
+        context.strokeStyle = "#FFFFFF"
+        context.lineWidth = 1
+        context.beginPath()
+        context.arc(this.x, this.y, this.r, 0, 2*Math.PI, false)
+        context.stroke()
+        this.r += this.rMax * 0.05 * dt
+        if (this.r > this.rMax) this.r = 0.05 * this.rMax
+        if (Env.tGameplay - this.tCreated > this.lifespan) this.DEAD = true
+    }
+    const spawnEffect = (type,props) => Effects[Effects.push(new EffectBook[type](props)) - 1]
+
 
     const Viewport = (function(){
         var scale = 1 // scale FACTOR e.g. `size_on_screen = size*scale`
@@ -97,11 +148,13 @@ const app = (function(){
 
     const gameplayLoop = function() {
 
+        var i
+
         // get time step
         var tNow = new Date().getTime()
-        var dt = tNow - Env.tPrevious
+        var dt = tNow - Env.tGameplay
         if (dt > 40) console.log(dt + "ms elapsed between frames!")
-        Env.tPrevious = tNow
+        Env.tGameplay = tNow
 
         // step world actions
         resetEntityGroups()
@@ -115,11 +168,26 @@ const app = (function(){
             for (var aI in couplets) for (var bI in couplets[aI]) if (couplets[aI][bI]) {
                 var A = Entities[aI]
                 var B = Entities[bI]
-                if (A.injure && B.damage) A.injure(B.damage())
-                if (B.injure && A.damage) B.injure(A.damage())
+                if (A.injure && B.damage) {
+                    A.injure(B.damage())
+                    if (A.DEAD && B.owner==="player") Player.updateKills(A.type)
+                }
+                if (B.injure && A.damage) {
+                    B.injure(A.damage())
+                    if (B.DEAD && A.owner==="player") Player.updateKills(B.type)
+                }
             }
         }
-        for (var _ei = Entities.length; _ei--;) if (Entities[_ei].DEAD) Entities.splice(_ei,1)
+
+        // handle user input
+        UserInput.handle()
+        
+        // remove dead entities
+        for (i = Entities.length; i--;) if (Entities[i].DEAD) {
+            if (Entities[i].die) Entities[i].die()
+            Entities.splice(i,1)
+        }
+
         // collision test and handle actions
         // clear canvas
         context.setTransform(1,0,0,1,0,0)
@@ -134,15 +202,15 @@ const app = (function(){
             context.canvas.height/2 + Viewport.y()*Viewport.scale()
         )
         Entities.forEach( entity => entity.draw() )
-
-        // handle user input
-        UserInput.handle()
-
+        Effects.forEach( (effect,index) => effect.stepAndDraw(dtGame,index) )
+        for (i = Effects.length; i--;) if (Effects[i].DEAD) Effects.splice(i,1)
+        
         // handle world randomization and progress
-        if (Math.random() > 0.96) Dungeon.spawn("massDriver",{})
+        if (Math.random() > 0.95) Dungeon.spawn("massDriver",{})
+        if (Math.random() > 0.91) Dungeon.spawn("weaponizedMeteorite",{})
 
         //debug :: time frame
-        //if(Math.random() > 0.95) console.log(new Date().getTime() - tNow)
+        // if(Math.random() > 0.95) console.log(new Date().getTime() - tNow)
 
         // loop
         if (Env.state === "gameplay") window.requestAnimationFrame(gameplayLoop)
@@ -153,31 +221,44 @@ const app = (function(){
 
         var T = {}
 
-        T.plasmaGun = function(props) {
+        const _setLevel = function(level,callback) {
+            var dir = level - this.level > 0 ? 1 : -1
+            while (this.level !== level) callback(dir)
+        }
+
+        const BaseEntity = function(props) {
             this.level = 1
-            this.cooldown = 225
-            this.lastFired = 0
+            this.owner = props.owner
+            this.tCreated = new Date().getTime()
             this.x = props.x
             this.y = props.y
-            this.r = 10
-            this.bolt = {
-                speed: 2,
-                width: 2,
-                trail: 7,
-                lifespan: 3100
-            }
-            if (props.level) this.setLevel(props.level)
+            this.r = props.r
+            if (props.level && this.setLevel) this.setLevel(props.level)
         }
+
+        T.plasmaGun = function(props) {
+            props.r = 7
+            BaseEntity.call(this,props)
+            this.cooldown = 225
+            this.lastFired = 0
+            this.colorCycleIndex = 0
+            this.colorCycleWheel = [
+                [255,0,0],
+                [255,128,0],
+                [255,255,0],
+                [128,255,0],
+                [0,255,128],
+                [0,255,255],
+                [0,128,255],
+                [0,0,255]
+            ]
+        }
+        T.plasmaGun.prototype.type = "Plasma Gun"
         T.plasmaGun.prototype.setLevel = function(level) {
-            var dir = level - this.level > 0 ? 1 : -1
-            while (this.level !== level) {
+            _setLevel.call(this, level, dir => {
                 this.level += dir
-                this.cooldown += dir * -0.1 * this.cooldown
-                this.bolt.speed += dir * 0.05 * this.bolt.speed
-                this.bolt.width += dir * 0.02 * this.bolt.width
-                this.bolt.trail += dir * 0.03 * this.bolt.trail
-                this.bolt.lifespan += dir * 100
-            }
+                this.cooldown += dir * -0.01 * this.cooldown
+            })
         }
         T.plasmaGun.prototype.step = function(dt,index) {
             EntityGroups.playerWeapons.push(index)
@@ -194,34 +275,35 @@ const app = (function(){
         T.plasmaGun.prototype.fire = function(t,worldPosArr) {
             if (t - this.lastFired >= this.cooldown) {
                 Dungeon.spawn("plasma",{
+                    color: this.colorCycleWheel[this.colorCycleIndex++],
+                    owner: this.owner,
                     vector: worldPosArr,
-                    x:this.x,
-                    y:this.y + this.r + 1,
-                    bolt: this.bolt
+                    x: this.x,
+                    y: this.y + this.r + 3,
+                    level: this.level
                 })
+                if (this.colorCycleIndex === this.colorCycleWheel.length) this.colorCycleIndex = 0
                 this.lastFired = t
             }
         }
 
         T.plasma = function(props) {
-            if (!props.vector) console.log(props)
-            this.x = props.x || 0
-            this.y = props.y || 0
-            this.color = props.bolt.color || [200,0,0]
-            this.r = props.bolt.width || 2
-            this.boltLength = props.bolt.trail || 7
-            this.speed = props.bolt.speed || 2
-            let _vx = props.vector[0] - this.x
-            let _vy = props.vector[1] - this.y
-            let _vs = Math.sqrt( _vx*_vx + _vy*_vy )
-            this.dx = _vx / _vs * this.speed
-            this.dy = _vy / _vs * this.speed
-            this.Ti = new Date().getTime()
-            this.xLengthAdd = _vx / _vs * this.boltLength
-            this.yLengthAdd = _vy / _vs * this.boltLength
-            this.lifespan = 3100
-            this.level = 1
+            props.r = 1.2 + 0.07 * props.level
+            BaseEntity.call(this,props)
+            this.trailLength = this.r * 5
+            this.color = props.color
+            this.speed = 1.5 + 0.2 * props.level
+            this.lifespan = 2000 + 200 * props.level
+            let dX = props.vector[0] - this.x
+            let dY = props.vector[1] - this.y
+            let normVec = normalizeVector([dX,dY], this.speed)
+            this.dx = normVec[0]
+            this.dy = normVec[1]
+            let addVec = normalizeVector([dX,dY], this.trailLength)
+            this.xLengthAdd = addVec[0]
+            this.yLengthAdd = addVec[1]
         }
+        T.plasma.prototype.type = "Plasma"
         T.plasma.prototype.draw = function() {
             context.strokeStyle = "rgb("+this.color.join(",")+")"
             context.lineWidth = this.r
@@ -231,23 +313,25 @@ const app = (function(){
             context.stroke()
         }
         T.plasma.prototype.step = function(dt,index) {
-            if (Env.tPrevious - this.Ti > this.lifespan) this.DEAD = true
+            if (Env.tGameplay - this.tCreated > this.lifespan) this.DEAD = true
             this.x += this.dx
             this.y += this.dy
         }
         T.plasma.prototype.damage = function() {
-            return this.r * this.boltLength * this.level / this.speed
+            this.DEAD = true
+            return 4 * this.r * this.speed
         }
 
         T.massDriver = function(props) {
             this.r = props.r || 6
             this.dx = (Math.random() > 0.5 ? -1 : 1) * Math.random() * 0.1
             this.dy = -0.8
-            this.x = (Math.random() > 0.5 ? -1 : 1) * Math.random() * 100
-            this.y = 800
+            this.x = (Math.random() > 0.5 ? -1 : 1) * Math.random() * 300
+            this.y = 1600
         }
+        T.massDriver.prototype.type = "Mass Driver"
         T.massDriver.prototype.draw = function() {
-            context.fillStyle = "#AA7777"
+            context.fillStyle = "#FFD700"
             context.beginPath()
             context.arc(this.x, this.y, this.r, 0, 2*Math.PI, false)
             context.fill()
@@ -266,6 +350,41 @@ const app = (function(){
             this.DEAD = true
             return this.r * this.r * 2.5
         }
+        T.massDriver.prototype.die = function() {
+            spawnEffect("impact", {x:this.x, y:this.y, r:this.r*3.5, lifespan: 500})
+        }
+
+        T.weaponizedMeteorite = function() {
+            this.r = 3
+            this.dx = (Math.random() > 0.5 ? -1 : 1) * Math.random() * 0.1
+            this.dy = -1.3
+            this.x = (Math.random() > 0.5 ? -1 : 1) * Math.random() * 300
+            this.y = 1600
+        }
+        T.weaponizedMeteorite.prototype.type = "Weaponized Meteorite"
+        T.weaponizedMeteorite.prototype.step = function(dt,index) {
+            this.x += this.dx * dt
+            this.y += this.dy * dt
+            if (this.y < 0) this.DEAD = true
+        }
+        T.weaponizedMeteorite.prototype.draw = function() {
+            context.fillStyle = "#C0C0C0"
+            context.beginPath()
+            context.arc(this.x, this.y, this.r, 0, 2*Math.PI, false)
+            context.fill()
+        }
+        T.weaponizedMeteorite.prototype.injure = function() {
+            this.DEAD = true
+        }
+        T.weaponizedMeteorite.prototype.damage = function() {
+            this.DEAD = true
+            return Math.random()*13
+        }
+        T.weaponizedMeteorite.prototype.die = function() {
+            spawnEffect("impact", {x:this.x, y:this.y, r:1.5*this.r, lifespan:350})
+        }
+
+        for (var _type in T) Player.kills[safeChars(T[_type].prototype.type)] = 0
 
         return {
             spawn: function(type,props) {
@@ -276,12 +395,6 @@ const app = (function(){
             }
         }
     })()
-
-    // const canvasClick = function(event) {
-    //     Dungeon.spawn("plasma",{
-    //         vector: Viewport.clientToWorld(event.clientX,event.clientY)
-    //     })
-    // }
 
     const resizeContext = function() {
         context.canvas.width = canvas.offsetWidth
@@ -302,7 +415,7 @@ const app = (function(){
                 "mouse"(){
                     switch(Env.mouseAction) {
                         case "fire":
-                            EntityGroups.playerWeapons.forEach( wIndex => Entities[wIndex].fire(Env.tPrevious,worldClickPos) )
+                            EntityGroups.playerWeapons.forEach( wIndex => Entities[wIndex].fire(Env.tGameplay,worldClickPos) )
                             break
                         default: throw new Error("no mouse action set")
                     }
@@ -338,12 +451,12 @@ const app = (function(){
         if (Env.state) console.log("Env.state!",Env.state)
         Env.mouseAction = "fire"
         Env.state = "gameplay"
-        Env.tPrevious = new Date().getTime()
+        Env.tGameplay = new Date().getTime()
 
         // debug :: create a weapon?
-        Dungeon.spawn("plasmaGun",{x:-250,y:0}).setLevel(2)
-        Dungeon.spawn("plasmaGun",{x:0,y:0}).setLevel(5)
-        Dungeon.spawn("plasmaGun",{x:250,y:0}).setLevel(10)
+        Dungeon.spawn("plasmaGun",{x:-300,y:0,owner:"player"}).setLevel(5)
+        Dungeon.spawn("plasmaGun",{x:0,y:0,owner:"player"}).setLevel(10)
+        Dungeon.spawn("plasmaGun",{x:300,y:0,owner:"player"}).setLevel(20)
 
         window.requestAnimationFrame(gameplayLoop)
     }
