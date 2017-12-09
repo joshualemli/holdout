@@ -17,29 +17,40 @@ const app = (function(){
 
     var Player = {
         resources: {
+            water: 0,
             unrefinedOre: 0,
             processedOre: 0,
+            commonMinerals: 0,
             preciousMinerals: 0
         },
         kills: {},
         updateKills: type => {
-            var safeCharsType = safeChars(type)
-            Player.kills[safeCharsType] += 1
-            var e = document.getElementById("kills-item-"+safeCharsType)
-            if (!e) {
-                e = document.createElement("div")
-                e.innerHTML = `<span style="width:20em">${type}</span> ... <span id="kills-item-${safeCharsType}">1</span>`
-                document.getElementById("kills").appendChild(e)
+            Player.kills[type] += 1
+        },
+        updateUI: () => {
+            var type
+            for (type in Player.resources) document.getElementById(`player-resources-${type}-value`).innerHTML = Player.resources[type].toFixed(3)
+            for (type in Player.kills) if (Player.kills[type]) {
+                var safeCharsType = safeChars(type)
+                var e = document.getElementById("kills-item-"+safeCharsType)
+                if (!e) {
+                    e = document.createElement("div")
+                    e.innerHTML = `<span style="width:20em">${type}</span> ... <span id="kills-item-${safeCharsType}">1</span>`
+                    document.getElementById("kills").appendChild(e)
+                }
+                else e.innerHTML = Player.kills[type]
             }
-            else e.innerHTML = Player.kills[safeCharsType]
+            Env.lastPlayerUIUpdate = new Date().getTime()
         }
     }
-window.pk = Player
+
     var Entities = []
     var EntityGroups
     const resetEntityGroups = () => EntityGroups = {
-        playerWeapons: []
+        playerWeapons: [],
     }
+
+    var SubterraneanEntities = []
 
     var Effects = []
     var EffectBook = {}
@@ -68,7 +79,7 @@ window.pk = Player
         var scale = 1 // scale FACTOR e.g. `size_on_screen = size*scale`
         var pos = { x:0, y:0 }
         return {
-            init() { pos.x=0; pos.y=context.canvas.height/2; scale=1; },
+            init() { pos.x=0; pos.y=context.canvas.height/3; scale=1; },
             zoom(factor) { scale *= factor },
             move(axis,amount) { pos[axis] += amount*5 },
             scale: ()=>scale,
@@ -80,6 +91,20 @@ window.pk = Player
                     pos.x - (context.canvas.width/scale/2) + (cX/scale),
                     pos.y + (context.canvas.height/scale/2) - (cY/scale)
                 ]
+            },
+            getGroundCutoutXYWH() {
+                let worldUnitsViewHeight = context.canvas.height/scale
+                var yMin = pos.y - worldUnitsViewHeight/2
+                if (yMin < 0) {
+                    let worldUnitsViewWidth = context.canvas.width/scale
+                    return {
+                        X: pos.x - worldUnitsViewWidth/2,
+                        Y: yMin,
+                        W: worldUnitsViewWidth,
+                        H: pos.y + worldUnitsViewHeight/2 > 0 ? 0 - yMin : worldUnitsViewHeight
+                    }
+                }
+                else return null
             }
         }
     })()
@@ -110,6 +135,19 @@ window.pk = Player
                     bin[x][y] = [entityIndex]
                 }
             },
+            getNeighbors(x,y){
+                x = hash(x)
+                y = hash(y)
+                var neighborsIndex = []
+                for (var xAdd=-1; xAdd<2; xAdd+=1) {
+                    var _addX = x + xAdd
+                    if (bin[_addX]) for (var yAdd=-1; yAdd<2; yAdd+=1) {
+                        var _addY = y + yAdd
+                        if (bin[_addX][_addY]) bin[_addX][_addY].forEach( nI => neighborsIndex.push(nI) )
+                    }
+                }
+                return neighborsIndex
+            },
             runHitTest(){
                 var couplets = {}
                 var neighborsIndex
@@ -138,13 +176,16 @@ window.pk = Player
                         })
                     })
                 }
-                // reset for next use
-                bin = {}
                 // return result
                 return couplets
+            },
+            reset() {
+                bin = {}
             }
         }
     })()
+
+    // GAMEPLAY LOOP -----------------------------------------------------------
 
     const gameplayLoop = function() {
 
@@ -155,6 +196,9 @@ window.pk = Player
         var dt = tNow - Env.tGameplay
         if (dt > 40) console.log(dt + "ms elapsed between frames!")
         Env.tGameplay = tNow
+
+        // reset spatial bin
+        Spatial.reset()
 
         // step world actions
         resetEntityGroups()
@@ -170,14 +214,15 @@ window.pk = Player
                 var B = Entities[bI]
                 if (A.injure && B.damage) {
                     A.injure(B.damage())
-                    if (A.DEAD && B.owner==="player") Player.updateKills(A.type)
+                    if (A.DEAD && B.owner===1) Player.updateKills(A.type)
                 }
                 if (B.injure && A.damage) {
                     B.injure(A.damage())
-                    if (B.DEAD && A.owner==="player") Player.updateKills(B.type)
+                    if (B.DEAD && A.owner===1) Player.updateKills(B.type)
                 }
             }
         }
+        SubterraneanEntities.forEach( (entity,index) => entity.step(dtGame,index) )
 
         // handle user input
         UserInput.handle()
@@ -202,6 +247,14 @@ window.pk = Player
             context.canvas.height/2 + Viewport.y()*Viewport.scale()
         )
         Entities.forEach( entity => entity.draw() )
+        // draw ground?
+        var groundDims = Viewport.getGroundCutoutXYWH()
+        if (groundDims) {
+            // draw ground BG
+            context.fillStyle = "#422"
+            context.fillRect(groundDims.X, groundDims.Y, groundDims.W, groundDims.H)
+            SubterraneanEntities.forEach( entity => entity.draw() )
+        }
         Effects.forEach( (effect,index) => effect.stepAndDraw(dtGame,index) )
         for (i = Effects.length; i--;) if (Effects[i].DEAD) Effects.splice(i,1)
         
@@ -212,14 +265,66 @@ window.pk = Player
         //debug :: time frame
         // if(Math.random() > 0.95) console.log(new Date().getTime() - tNow)
 
+        // update player UI if delay has elapsed
+        if (Env.tGameplay - Env.lastPlayerUIUpdate > 700) Player.updateUI()
+
         // loop
         if (Env.state === "gameplay") window.requestAnimationFrame(gameplayLoop)
 
     }
 
+    const DiggingTeam = (function(){
+        
+        var B = {} // buildings
+
+        B.bidirectionalConduit = function(props) {
+            this.xArr = props.xArr
+            this.yArr = props.yArr
+        }
+        B.bidirectionalConduit.prototype.type = "Bidirectional Conduit"
+        B.bidirectionalConduit.prototype.step = function(){}
+        B.bidirectionalConduit.prototype.draw = function(){
+            context.lineWidth = 3
+            context.strokeStyle = "#777"
+            context.beginPath();
+            context.moveTo(this.xArr[0],this.yArr[0]);
+            context.lineTo(this.xArr[1],this.yArr[1]);
+            context.stroke();
+        }
+
+        B.hydrothermalExtrator = function(props) {
+            this.x = props.x
+            this.y = props.y
+            this.r = 15
+            this.prod = {
+                water: 0.0001,
+                preciousMinerals: 0.000001
+            }
+        }
+        B.hydrothermalExtrator.prototype.type = "Hydrothermal Extrator"
+        B.hydrothermalExtrator.prototype.step = function() {
+            for (var type in this.prod) Player.resources[type] += this.prod[type]
+        }
+        B.hydrothermalExtrator.prototype.draw = function() {
+            context.fillStyle = "#710"
+            context.beginPath()
+            context.arc(this.x, this.y, this.r, 0, 2*Math.PI, false)
+            context.fill()
+        }
+
+
+        return {
+            create(buildingType,props) {
+                var e = new B[buildingType](props)
+                SubterraneanEntities.push(e)
+                return e
+            }
+        }
+    })()
+
     const Dungeon = (function(){
 
-        var T = {}
+        var T = {} // types
 
         const _setLevel = function(level,callback) {
             var dir = level - this.level > 0 ? 1 : -1
@@ -235,6 +340,24 @@ window.pk = Player
             this.r = props.r
             if (props.level && this.setLevel) this.setLevel(props.level)
         }
+        
+        T.subterraneanPassage = function(props) {
+            props.r = 6
+            BaseEntity.call(this,props)
+            this.bidirectionalConduit = DiggingTeam.create("bidirectionalConduit",{xArr:[this.x,this.x],yArr:[this.y,this.y-this.r-40],})
+        }
+        T.subterraneanPassage.prototype.type = "Subterranean Passage"
+        T.subterraneanPassage.prototype.step = function() {}
+        T.subterraneanPassage.prototype.draw = function() {
+            context.fillStyle = "#0FF"
+            context.fillRect(this.x-this.r,this.y-this.r,this.r*2,this.r*2)
+        }
+        T.subterraneanPassage.prototype.injure = function(damage) {
+            let area = Math.PI * this.r * this.r - damage
+            this.r = Math.sqrt(area / Math.PI)
+        }
+
+
 
         T.plasmaGun = function(props) {
             props.r = 7
@@ -263,7 +386,7 @@ window.pk = Player
             })
         }
         T.plasmaGun.prototype.step = function(dt,index) {
-            EntityGroups.playerWeapons.push(index)
+            if (this.owner===1) EntityGroups.playerWeapons.push(index) // grant easy access to controllable weapons
         }
         T.plasmaGun.prototype.draw = function(){
             context.fillStyle = "#FF00FF"
@@ -290,12 +413,12 @@ window.pk = Player
         }
 
         T.plasma = function(props) {
-            props.r = 1.2 + 0.07 * props.level
+            props.r = 1.2 + 0.1 * props.level
             BaseEntity.call(this,props)
-            this.trailLength = this.r * 5
+            this.trailLength = this.r * 4
             this.color = props.color
-            this.speed = 1.5 + 0.2 * props.level
-            this.lifespan = 2000 + 200 * props.level
+            this.speed = 1 + 0.5 * props.level
+            this.lifespan = 2500 - 30 * props.level
             let dX = props.vector[0] - this.x
             let dY = props.vector[1] - this.y
             let normVec = normalizeVector([dX,dY], this.speed)
@@ -386,7 +509,7 @@ window.pk = Player
             spawnEffect("impact", {x:this.x, y:this.y, r:1.5*this.r, lifespan:350})
         }
 
-        for (var _type in T) Player.kills[safeChars(T[_type].prototype.type)] = 0
+        for (var _type in T) Player.kills[T[_type].prototype.type] = 0
 
         return {
             spawn: function(type,props) {
@@ -419,6 +542,21 @@ window.pk = Player
                         case "fire":
                             EntityGroups.playerWeapons.forEach( wIndex => Entities[wIndex].fire(Env.tGameplay,worldClickPos) )
                             break
+                        case "select":
+                            var selected = []
+                            let x = worldClickPos[0]
+                            let y = worldClickPos[1]
+                            Spatial.getNeighbors(x,y).forEach( eI => {
+                                var entity = Entities[eI]
+                                var dx = entity.x - x
+                                var dy = entity.y - y
+                                if (Math.sqrt(dx*dx+dy*dy) < entity.r) selected.push(eI)
+                            })
+                            console.log(selected.map(i=>Entities[i]))
+                            break
+                        case "construct":
+                            console.log("unhandled behavior...")
+                            break
                         default: throw new Error("no mouse action set")
                     }
                 }
@@ -432,6 +570,13 @@ window.pk = Player
                 canvas.addEventListener("mousemove", event => worldClickPos = Viewport.clientToWorld(event.clientX,event.clientY) )
                 canvas.addEventListener("mousedown", event => KeyMap.mouse = true )
                 canvas.addEventListener("mouseup", event => KeyMap.mouse = false )
+                Array.from(document.getElementsByClassName("player-action-item")).forEach( e => {
+                    e.onclick = event => {
+                        Env.mouseAction = event.target.innerHTML.toLowerCase()
+                        Array.from(document.getElementsByClassName("player-action-item-selected")).forEach( se => se.classList.remove("player-action-item-selected") )
+                        event.target.classList.add("player-action-item-selected")
+                    }
+                })
             },
             handle() {
                 for (var key in KeyMap) if (KeyMap[key] && inputAction[Env.state][key]) inputAction[Env.state][key]()
@@ -454,11 +599,14 @@ window.pk = Player
         Env.mouseAction = "fire"
         Env.state = "gameplay"
         Env.tGameplay = new Date().getTime()
+        Env.lastPlayerUIUpdate = 0
 
         // debug :: create a weapon?
-        Dungeon.spawn("plasmaGun",{x:-300,y:0,owner:"player"}).setLevel(5)
-        Dungeon.spawn("plasmaGun",{x:0,y:0,owner:"player"}).setLevel(10)
-        Dungeon.spawn("plasmaGun",{x:300,y:0,owner:"player"}).setLevel(20)
+        Dungeon.spawn("plasmaGun",{x:-300,y:0,owner:1}).setLevel(5)
+        Dungeon.spawn("plasmaGun",{x:0,y:0,owner:1}).setLevel(10)
+        Dungeon.spawn("plasmaGun",{x:300,y:0,owner:1}).setLevel(20)
+        Dungeon.spawn("subterraneanPassage",{x:150,y:0,owner:1})
+        DiggingTeam.create("hydrothermalExtrator",{x:140,y:-30})
 
         window.requestAnimationFrame(gameplayLoop)
     }

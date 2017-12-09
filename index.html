@@ -6,6 +6,7 @@
                 width:100%;height:100%;
                 margin:0;padding:0;border:0;
                 background:linear-gradient(0deg,#000,#000000);
+                user-select:none;
             }
             .fullscreen {
                 position:absolute; top:0; left:0;
@@ -14,10 +15,24 @@
             }
 
             #kills {
-                user-select:none;
                 position:absolute; top:0; left:0; z-index:20;
                 color:#FFF;
                 font-family:monospace;
+            }
+            #player {
+                position:absolute; top:0; right:0; z-index:20;
+                color:#FFF;
+                font-family:monospace;
+            }
+
+            #player-action-fire {}
+            #player-action-select {}
+            #player-action-construct {}
+            .player-action-item {
+                border:1px solid #999;
+            }
+            .player-action-item-selected {
+                border:2px solid #0F0;
             }
     
             #canvas {
@@ -31,6 +46,22 @@
     </head>
     <body>
         <div id="kills"></div>
+        <div id="player">
+            <div id="player-resources">
+                <table>
+                    <tr><td>Water</td><td id="player-resources-water-value"></td></tr>
+                    <tr><td>Unrefined Ore</td><td id="player-resources-unrefinedOre-value"></td></tr>
+                    <tr><td>Processed Ore</td><td id="player-resources-processedOre-value"></td></tr>
+                    <tr><td>Common Minerals</td><td id="player-resources-commonMinerals-value"></td></tr>
+                    <tr><td>Precious Minerals</td><td id="player-resources-preciousMinerals-value"></td></tr>
+                </table>
+            </div>
+            <div id="player-action">
+                <div id="player-action-fire" class="player-action-item player-action-item-selected">FIRE</div>
+                <div id="player-action-select" class="player-action-item">SELECT</div>
+                <div id="player-action-construct" class="player-action-item">CONSTRUCT</div>
+            </div>
+        </div>
         <canvas id="canvas" class="fullscreen"></canvas>
     </body>
 </html>
