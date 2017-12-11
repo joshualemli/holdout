@@ -5,6 +5,8 @@ const app = (function(){
 
     var canvas, context
 
+    var DrawCache = {}
+
     const safeChars = str => str.replace(/[^a-zA-Z0-9]/g,"")
 
     const normalizeVector = (v,l) => { // v = original vector, l = normalized length
@@ -21,9 +23,15 @@ const app = (function(){
             unrefinedOre: 0,
             processedOre: 0,
             commonMinerals: 0,
-            preciousMinerals: 0
+            preciousMinerals: 0,
+            astatine222: 0,
+            neptunium261: 0,
+            promethium177: 0,
+            trifluxIxynonite: 0,
+            activatedIxynonite: 0
         },
         kills: {},
+        selectedEntity: {},
         updateKills: type => {
             Player.kills[type] += 1
         },
@@ -35,7 +43,7 @@ const app = (function(){
                 var e = document.getElementById("kills-item-"+safeCharsType)
                 if (!e) {
                     e = document.createElement("div")
-                    e.innerHTML = `<span style="width:20em">${type}</span> ... <span id="kills-item-${safeCharsType}">1</span>`
+                    e.innerHTML = `<span style="width:20em">${type}</span> <span id="kills-item-${safeCharsType}">1</span>`
                     document.getElementById("kills").appendChild(e)
                 }
                 else e.innerHTML = Player.kills[type]
@@ -92,6 +100,21 @@ const app = (function(){
                     pos.y + (context.canvas.height/scale/2) - (cY/scale)
                 ]
             },
+            getSkyCutoutXYWH() {
+                let worldUnitsViewHeight = context.canvas.height/scale
+                var yMax = pos.y + worldUnitsViewHeight/2
+                if (yMax > 0) {
+                    let worldUnitsViewWidth = context.canvas.width/scale
+                    let yMin = yMax - worldUnitsViewHeight
+                    return {
+                        X: pos.x - worldUnitsViewWidth/2,
+                        Y: yMin >=0 ? yMin : 0,
+                        W: worldUnitsViewWidth,
+                        H: yMin >=0 ? worldUnitsViewHeight : yMax
+                    }
+                }
+                return null
+            },
             getGroundCutoutXYWH() {
                 let worldUnitsViewHeight = context.canvas.height/scale
                 var yMin = pos.y - worldUnitsViewHeight/2
@@ -104,7 +127,7 @@ const app = (function(){
                         H: pos.y + worldUnitsViewHeight/2 > 0 ? 0 - yMin : worldUnitsViewHeight
                     }
                 }
-                else return null
+                return null
             }
         }
     })()
@@ -204,6 +227,7 @@ const app = (function(){
         resetEntityGroups()
         var dtGame = dt/16
         Entities.forEach( (entity,index) => {
+            entity._index = index
             entity.step(dtGame,index)
             Spatial.add(entity.x,entity.y,index)
         })
@@ -222,13 +246,16 @@ const app = (function(){
                 }
             }
         }
-        SubterraneanEntities.forEach( (entity,index) => entity.step(dtGame,index) )
+        SubterraneanEntities.forEach( (entity,index) => {
+            entity._index = index
+            entity.step(dtGame,index)
+         })
 
         // handle user input
         UserInput.handle()
         
         // remove dead entities
-        for (i = Entities.length; i--;) if (Entities[i].DEAD) {
+        for (i = Entities.length; i--;) if (Entities[i].DEAD || Entities[i].y < 0) {
             if (Entities[i].die) Entities[i].die()
             Entities.splice(i,1)
         }
@@ -246,12 +273,18 @@ const app = (function(){
             context.canvas.width/2 - Viewport.x()*Viewport.scale(),
             context.canvas.height/2 + Viewport.y()*Viewport.scale()
         )
+        // draw sky
+        var skyDims = Viewport.getSkyCutoutXYWH()
+        if (skyDims) {
+            context.fillStyle = DrawCache.gradient.sky
+            context.fillRect(skyDims.X, skyDims.Y, skyDims.W, skyDims.H)
+        }
+        // draw entities
         Entities.forEach( entity => entity.draw() )
-        // draw ground?
+        // draw ground
         var groundDims = Viewport.getGroundCutoutXYWH()
         if (groundDims) {
-            // draw ground BG
-            context.fillStyle = "#422"
+            context.fillStyle = "#331911"
             context.fillRect(groundDims.X, groundDims.Y, groundDims.W, groundDims.H)
             SubterraneanEntities.forEach( entity => entity.draw() )
         }
@@ -280,11 +313,12 @@ const app = (function(){
         B.bidirectionalConduit = function(props) {
             this.xArr = props.xArr
             this.yArr = props.yArr
+            this.r = 3
         }
         B.bidirectionalConduit.prototype.type = "Bidirectional Conduit"
         B.bidirectionalConduit.prototype.step = function(){}
         B.bidirectionalConduit.prototype.draw = function(){
-            context.lineWidth = 3
+            context.lineWidth = this.r*2
             context.strokeStyle = "#777"
             context.beginPath();
             context.moveTo(this.xArr[0],this.yArr[0]);
@@ -297,7 +331,8 @@ const app = (function(){
             this.y = props.y
             this.r = 15
             this.prod = {
-                water: 0.0001,
+                water: 0.0002,
+                commonMinerals: 0.000005,
                 preciousMinerals: 0.000001
             }
         }
@@ -362,7 +397,7 @@ const app = (function(){
         T.plasmaGun = function(props) {
             props.r = 7
             BaseEntity.call(this,props)
-            this.cooldown = 225
+            this.cooldown = 150
             this.lastFired = 0
             // this.color = [63,255,0]
             this.colorCycleIndex = 0
@@ -382,7 +417,7 @@ const app = (function(){
         T.plasmaGun.prototype.setLevel = function(level) {
             _setLevel.call(this, level, dir => {
                 this.level += dir
-                this.cooldown += dir * -0.01 * this.cooldown
+                // this.cooldown += dir * -0.01 * this.cooldown
             })
         }
         T.plasmaGun.prototype.step = function(dt,index) {
@@ -405,7 +440,11 @@ const app = (function(){
                     vector: worldPosArr,
                     x: this.x,
                     y: this.y + this.r + 3,
-                    level: this.level
+                    level: this.level,
+                    speed: 1 + 0.5 * this.level,
+                    r: 1.2 * 0.12 * this.level,
+                    trailLength: 5 * 0.12 * this.level,
+                    lifespan: 2500 - 30 * this.level
                 })
                 if (this.colorCycleIndex === this.colorCycleWheel.length) this.colorCycleIndex = 0
                 this.lastFired = t
@@ -413,12 +452,11 @@ const app = (function(){
         }
 
         T.plasma = function(props) {
-            props.r = 1.2 + 0.1 * props.level
             BaseEntity.call(this,props)
-            this.trailLength = this.r * 4
+            this.trailLength = props.trailLength || this.r
             this.color = props.color
-            this.speed = 1 + 0.5 * props.level
-            this.lifespan = 2500 - 30 * props.level
+            this.speed = props.speed
+            this.lifespan = props.lifespan
             let dX = props.vector[0] - this.x
             let dY = props.vector[1] - this.y
             let normVec = normalizeVector([dX,dY], this.speed)
@@ -464,11 +502,10 @@ const app = (function(){
         T.massDriver.prototype.step = function(dt,index) {
             this.x += this.dx * dt
             this.y += this.dy * dt
-            if (this.y < 0) this.DEAD = true
         }
         T.massDriver.prototype.injure = function(damage) {
             let area = this.r*this.r*Math.PI - damage
-            if (area < 2) this.DEAD = true
+            if (area < 25) this.DEAD = true
             else this.r = Math.sqrt(area/Math.PI)
         }
         T.massDriver.prototype.damage = function() {
@@ -476,7 +513,7 @@ const app = (function(){
             return this.r * this.r * 2.5
         }
         T.massDriver.prototype.die = function() {
-            spawnEffect("impact", {x:this.x, y:this.y, r:this.r*3.5, lifespan: 500})
+            spawnEffect("impact", {x:this.x, y:this.y, r:this.r*2.5, lifespan: 500})
         }
 
         T.weaponizedMeteorite = function() {
@@ -490,7 +527,6 @@ const app = (function(){
         T.weaponizedMeteorite.prototype.step = function(dt,index) {
             this.x += this.dx * dt
             this.y += this.dy * dt
-            if (this.y < 0) this.DEAD = true
         }
         T.weaponizedMeteorite.prototype.draw = function() {
             context.fillStyle = "#C0C0C0"
@@ -543,16 +579,46 @@ const app = (function(){
                             EntityGroups.playerWeapons.forEach( wIndex => Entities[wIndex].fire(Env.tGameplay,worldClickPos) )
                             break
                         case "select":
-                            var selected = []
+                            if (Env.tGameplay - Env.lastUserClick < 100) return null
+                            Player.selectedEntity = null
                             let x = worldClickPos[0]
                             let y = worldClickPos[1]
-                            Spatial.getNeighbors(x,y).forEach( eI => {
+                            Spatial.getNeighbors(x,y).some( eI => {
                                 var entity = Entities[eI]
                                 var dx = entity.x - x
                                 var dy = entity.y - y
-                                if (Math.sqrt(dx*dx+dy*dy) < entity.r) selected.push(eI)
+                                if (Math.sqrt(dx*dx+dy*dy) < entity.r) Player.selectedEntity = entity
+                                return !!Player.selectedEntity
                             })
-                            console.log(selected.map(i=>Entities[i]))
+                            if (!Player.selectedEntity) SubterraneanEntities.some( entity => {
+                                if (entity.xArr) {
+                                    var xArr = entity.xArr
+                                    var yArr = entity.yArr
+                                    var m = (yArr[1] - yArr[0]) / (xArr[1] - xArr[0])
+                                    if (Math.abs(m)> 1e6) m = 1e6
+                                    var c = yArr[0] - m * xArr[0]
+                                    var XE = (y-c)/m
+                                    if (XE > Math.max(xArr[0]+entity.r,xArr[1]+entity.r) || XE < Math.min(xArr[0]-entity.r,xArr[1]-entity.r)) return false
+                                    var YE = x*m+c
+                                    if (YE > Math.max(yArr[0]+entity.r,yArr[1]+entity.r) || YE < Math.min(yArr[0]-entity.r,yArr[1]-entity.r)) return false
+                                    var DX = XE - x
+                                    var DY = YE - y
+                                    var hypotenuse = Math.sqrt(DX*DX+DY*DY)
+                                    var dist = Math.abs(DX)*Math.abs(DY)/hypotenuse
+                                    
+                                    if (dist <= entity.r) Player.selectedEntity = entity
+                                }
+                                else {
+                                    var dx = entity.x - x
+                                    var dy = entity.y - y
+                                    if (Math.sqrt(dx*dx+dy*dy) < entity.r) Player.selectedEntity = entity
+                                }
+                                return !!Player.selectedEntity
+                            })
+                            if (Player.selectedEntity) {
+                                console.log(Player.selectedEntity)
+                            }
+                            Env.lastUserClick = new Date().getTime()
                             break
                         case "construct":
                             console.log("unhandled behavior...")
@@ -586,13 +652,25 @@ const app = (function(){
 
     return function() {
         if (!Env._READY) {
+
+            // ready canvas
             canvas = document.getElementById("canvas")
             context = canvas.getContext("2d")
             resizeContext()
             window.addEventListener("resize",resizeContext)
-            // canvas.addEventListener("click",canvasClick)
+
+            // ready drawing cache
+            DrawCache.gradient = {}
+            DrawCache.gradient.sky = context.createLinearGradient(0, 0, 0, 2000)
+            DrawCache.gradient.sky.addColorStop(0, "rgb(120,50,120)")//"rgb(140,90,160)")
+            DrawCache.gradient.sky.addColorStop(0.5, "rgba(0,0,0,0)")
+            DrawCache.gradient.sky.addColorStop(1, "rgba(0,0,0,0)")
+
+            // initialize submodules
             UserInput.init()
             Viewport.init()
+            
+            // set ready flag to prevent re-initialization
             Env._READY = true
         }
         if (Env.state) console.log("Env.state!",Env.state)
