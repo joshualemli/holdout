@@ -1,133 +1,14 @@
 <!doctype html>
 <html>
     <head>
-        <style>
-            html,body {
-                width:100%;height:100%;
-                margin:0;padding:0;border:0;
-                background:#000;
-                user-select:none;
-            }
-            .fullscreen {
-                position:absolute; top:0; left:0;
-                width:100%;height:100%;
-                margin:0;padding:0;border:0;
-            }
-
-            #kills {
-                position:absolute; top:0; left:0; z-index:20;
-                color:#FFF;
-                font-family:monospace;
-            }
-            #nexusButton {
-                position:absolute; top:0.4vmin; right:0.4vmin; z-index:200;
-                padding: 0 4vmin;
-                background:#000;
-                color:#FFF;
-                transition: background-color 0.5s, color 0.5s;
-                font-weight:bold;
-                text-align:center;
-                font-size:2vmin;
-                border:1px solid #FFF;
-                border-radius:0.2em;
-                margin-bottom:0.3em;
-            }
-            #nexusButton:hover {
-                background:#A4F;
-                color:#000;
-            }
-            .nexusButton-on {
-                background:#A4F;
-                color:#000;
-            }
-            .nexusButton-on:hover {
-                background:#000;
-                color:#FFF;
-            }
-            #player {
-                position:absolute; top:3.4vmin; right:0.4vmin; z-index:20;
-                color:#FFF;
-                font-family:monospace;
-            }
-            /* #player-action-fire {}
-            #player-action-select {}
-            #player-action-construct {} */
-            .player-action-item {
-                border:1px solid #999;
-            }
-            .player-action-item-selected {
-                border:2px solid #0F0;
-            }
-
-            #nexus {
-                position:absolute; top:0; left:0; z-index:100;
-                width:98vw; height:98vh; margin:1vh 1vw;
-                /* background:rgba(255,0,128,0.2); */
-                background:rgba(0,0,0,0.5);
-                border-radius: 0 1em 2em 3em;
-                overflow:hidden;
-            }
-            #nexus-fill {
-                position:absolute; top:0; left:0; z-index:101;
-                background:linear-gradient(100deg,rgba(255,0,128,0.25),rgba(0,50,150,0.4));
-                border-radius: 3px 6px;
-                width:100%;
-                height:100%;
-                overflow:hidden;
-            }
-    
-            #canvas {
-                z-index:10;
-            }
-            .occlude {
-                display:none;
-            }
-        </style>
-        <script src="script.js"></script>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>holdout</title>
+        <link rel="stylesheet" href="holdout.css">
+        <script src="quadtree.js" async></script>
+        <script src="holdout.js" async></script>
     </head>
     <body>
-        <div id="kills"></div>
-        <div id="nexus" class="occlude"><div id="nexus-fill">
-            <!-- ? power control [shields,attack,production] ? -->
-            <div id="trade">
-                <div id="trade-categorySelect">
-                    <div id="trade-categorySelect-weapons">Weapons</div>
-                    <div id="trade-categorySelect-items">Items</div>
-                    <div id="trade-categorySelect-autoassemblers">Autoassemblers</div>
-                    <div id="trade-categorySelect-bazaar">Bazaar</div>
-                </div>
-                <div id="trade-items"></div>
-            </div>
-            <div id="inventory"></div>
-            <div id="statistics">u suck</div>
-            <div id="gamestate">
-                <div id="gamestate-save">SAVE GAME</div>
-                <div id="gamestate-load">LOAD GAME</div>
-            </div>
-        </div></div>
-        <div id="nexusButton" onclick="document.getElementById('nexus').classList.toggle('occlude')">nexus</div>
-        <div id="player">
-            <div id="player-resources">
-                <table>
-                    <tr><td>Water</td><td id="player-resources-water-value"></td></tr>
-                    <tr><td>Unrefined Ore</td><td id="player-resources-unrefinedOre-value"></td></tr>
-                    <tr><td>Processed Ore</td><td id="player-resources-processedOre-value"></td></tr>
-                    <tr><td>Common Minerals</td><td id="player-resources-commonMinerals-value"></td></tr>
-                    <tr><td>Precious Minerals</td><td id="player-resources-preciousMinerals-value"></td></tr>
-                    <tr><td><sup>222</sup> Astatine</td><td id="player-resources-astatine222-value"></td></tr>
-                    <tr><td><sup>261</sup> Neptunium</td><td id="player-resources-neptunium261-value"></td></tr>
-                    <tr><td><sup>177</sup> Promethium</td><td id="player-resources-promethium177-value"></td></tr>
-                    <tr><td>Tri-flux Ixynonite</td><td id="player-resources-trifluxIxynonite-value"></td></tr>
-                    <tr><td>Activated Ixynonite</td><td id="player-resources-activatedIxynonite-value"></td></tr>
-                </table>
-            </div>
-            <div id="player-action">
-                <div id="player-action-fire" class="player-action-item player-action-item-selected">FIRE</div>
-                <div id="player-action-select" class="player-action-item">SELECT</div>
-                <div id="player-action-construct" class="player-action-item">CONSTRUCT</div>
-            </div>
-            <div id="player-selection"></div>
-        </div>
-        <canvas id="canvas" class="fullscreen"></canvas>
+        <canvas id="canvas"></canvas>
     </body>
 </html>
